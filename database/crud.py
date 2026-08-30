@@ -10,6 +10,7 @@ from typing import List, Optional
 from database.models import (
     User, Category, Product, Order, Payment, PaymentMethod, Review, Settings, AdminLog
 )
+from config import ADMIN_USER_ID
 
 
 # ============= USER OPERATIONS =============
@@ -23,9 +24,14 @@ class UserCRUD:
                 telegram_id=telegram_id,
                 telegram_username=telegram_username,
                 language="tg",
-                preferred_currency="somoni"
+                preferred_currency="somoni",
+                is_admin=(telegram_id == ADMIN_USER_ID)
             )
             db.add(user)
+            db.commit()
+        elif telegram_id == ADMIN_USER_ID and not user.is_admin:
+            # На случай если запись уже была создана раньше, до этого исправления
+            user.is_admin = True
             db.commit()
         return user
     

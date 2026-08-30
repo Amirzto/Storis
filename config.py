@@ -9,7 +9,7 @@ from typing import Dict
 # ⚠️ Впиши сюда СВОИ НОВЫЕ значения (старые из чата считаются скомпрометированными —
 # перевыпусти токен через @BotFather -> /revoke, и API-ключ в личном кабинете Epinby)
 TELEGRAM_BOT_TOKEN = "8742900596:AAEQvuOoPGrwppic1_JiagXl4z_VZmNzCr4"
-TELEGRAM_WEBAPP_URL = "https://ваш-домен.com"  # без слэша на конце, например https://tajdonat.example.com
+TELEGRAM_WEBAPP_URL = "https://donatertj.onrender.com/"  # без слэша на конце, например https://tajdonat.example.com
 
 # ============= EPINBY API =============
 EPINBY_API_KEY = "kaRSM3jf7PASFhhWX8CmIabnzDq11OBZqQkyMD9d"
