@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>TajDonater — Админ-панель</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="stylesheet" href="/static/css/admin.css" />
+</head>
+<body>
+<div id="admin-app">
+
+  <!-- ============= ЗАГРУЗКА ============= -->
+  <div id="admin-loading" class="admin-loading">
+    <div class="admin-loading-spinner"></div>
+    <p>Загрузка...</p>
+  </div>
+
+  <!-- ============= ЭКРАН: НЕТ ДОСТУПА ============= -->
+  <div id="admin-no-access" class="admin-gate" style="display:none;">
+    <div class="admin-gate-card">
+      <div class="admin-gate-icon">🚫</div>
+      <h2>Доступ запрещён</h2>
+      <p>Этот раздел доступен только администратору бота.</p>
+    </div>
+  </div>
+
+  <!-- ============= ЭКРАН: ВВОД ПАРОЛЯ ============= -->
+  <div id="admin-login" class="admin-gate" style="display:none;">
+    <div class="admin-gate-card">
+      <div class="admin-gate-icon">🔐</div>
+      <h2>Вход в админ-панель</h2>
+      <p id="admin-login-who" class="admin-gate-sub"></p>
+      <input type="password" id="admin-password-input" class="admin-input" placeholder="Пароль администратора" autocomplete="current-password" />
+      <button class="admin-btn admin-btn-primary admin-btn-block" id="admin-login-btn">Войти</button>
+      <p id="admin-login-error" class="admin-error"></p>
+    </div>
+  </div>
+
+  <!-- ============= ОСНОВНАЯ ОБОЛОЧКА АДМИНКИ ============= -->
+  <div id="admin-shell" style="display:none;">
+
+    <!-- Верхняя панель -->
+    <header class="admin-topbar">
+      <div class="admin-topbar-brand">
+        <span class="admin-topbar-logo">⭐</span>
+        <span>TajDonater · Админ</span>
+      </div>
+      <div class="admin-topbar-actions">
+        <span id="admin-current-name" class="admin-topbar-user"></span>
+        <button class="admin-icon-btn" id="admin-dark-toggle" title="Тема">🌙</button>
+        <button class="admin-icon-btn" id="admin-refresh-btn" title="Обновить">🔄</button>
+      </div>
+    </header>
+
+    <div class="admin-body">
+
+      <!-- Боковое меню -->
+      <nav class="admin-sidebar" id="admin-sidebar">
+        <button class="admin-nav-item active" data-section="dashboard">📊 <span>Обзор</span></button>
+        <button class="admin-nav-item" data-section="categories">🗂 <span>Категории</span></button>
+        <button class="admin-nav-item" data-section="products">🎮 <span>Товары</span></button>
+        <button class="admin-nav-item" data-section="orders">🛒 <span>Заказы (7 дней)</span></button>
+        <button class="admin-nav-item" data-section="payments">💰 <span>Пополнения</span>
+          <span class="admin-badge" id="admin-badge-payments" style="display:none;">0</span>
+        </button>
+        <button class="admin-nav-item" data-section="users">👥 <span>Пользователи</span></button>
+        <button class="admin-nav-item" data-section="reviews">⭐ <span>Отзывы</span></button>
+        <button class="admin-nav-item" data-section="paymethods">🏦 <span>Реквизиты</span></button>
+        <button class="admin-nav-item" data-section="texts">📝 <span>Тексты сайта</span></button>
+        <button class="admin-nav-item" data-section="settings">⚙️ <span>Настройки</span></button>
+      </nav>
+
+      <!-- Мобильная нижняя навигация -->
+      <nav class="admin-tabbar" id="admin-tabbar">
+        <button class="admin-tab-item active" data-section="dashboard">📊</button>
+        <button class="admin-tab-item" data-section="categories">🗂</button>
+        <button class="admin-tab-item" data-section="products">🎮</button>
+        <button class="admin-tab-item" data-section="orders">🛒</button>
+        <button class="admin-tab-item" data-section="payments">💰
+          <span class="admin-badge admin-badge-tab" id="admin-badge-payments-mobile" style="display:none;">0</span>
+        </button>
+        <button class="admin-tab-item" data-section="users">👥</button>
+        <button class="admin-tab-item" data-section="more">⋯</button>
+      </nav>
+
+      <!-- Доп. секции для мобильного меню "ещё" -->
+      <div class="admin-more-sheet" id="admin-more-sheet" style="display:none;">
+        <button class="admin-nav-item" data-section="reviews">⭐ <span>Отзывы</span></button>
+        <button class="admin-nav-item" data-section="paymethods">🏦 <span>Реквизиты</span></button>
+        <button class="admin-nav-item" data-section="texts">📝 <span>Тексты сайта</span></button>
+        <button class="admin-nav-item" data-section="settings">⚙️ <span>Настройки</span></button>
+      </div>
+
+      <!-- ============= КОНТЕНТ ============= -->
+      <main class="admin-main">
+
+        <!-- ---------- ОБЗОР / СТАТИСТИКА ---------- -->
+        <section class="admin-section active" id="section-dashboard">
+          <h1 class="admin-page-title">Обзор</h1>
+          <div class="admin-stats-grid" id="stats-grid">
+            <div class="admin-stat-card"><div class="admin-stat-label">Пользователей</div><div class="admin-stat-value" id="stat-total-users">—</div></div>
+            <div class="admin-stat-card"><div class="admin-stat-label">Заблокировано</div><div class="admin-stat-value" id="stat-blocked-users">—</div></div>
+            <div class="admin-stat-card"><div class="admin-stat-label">Заказов всего</div><div class="admin-stat-value" id="stat-total-orders">—</div></div>
+            <div class="admin-stat-card"><div class="admin-stat-label">Заказов за неделю</div><div class="admin-stat-value" id="stat-weekly-orders">—</div></div>
+            <div class="admin-stat-card"><div class="admin-stat-label">Пополнений подтверждено</div><div class="admin-stat-value" id="stat-topups">—</div></div>
+            <div class="admin-stat-card"><div class="admin-stat-label">Сумма пополнений</div><div class="admin-stat-value" id="stat-topup-amount">—</div></div>
+            <div class="admin-stat-card"><div class="admin-stat-label">Потрачено (выполнено)</div><div class="admin-stat-value" id="stat-spent">—</div></div>
+            <div class="admin-stat-card admin-stat-highlight"><div class="admin-stat-label">Ожидают подтверждения</div><div class="admin-stat-value" id="stat-pending-payments">—</div></div>
+          </div>
+        </section>
+
+        <!-- ---------- КАТЕГОРИИ ---------- -->
+        <section class="admin-section" id="section-categories">
+          <div class="admin-section-header">
+            <h1 class="admin-page-title">Категории</h1>
+            <button class="admin-btn admin-btn-primary" id="btn-add-category">+ Добавить категорию</button>
+          </div>
+          <div class="admin-grid-cards" id="categories-list"></div>
+        </section>
+
+        <!-- ---------- ТОВАРЫ ---------- -->
+        <section class="admin-section" id="section-products">
+          <div class="admin-section-header">
+            <h1 class="admin-page-title">Товары</h1>
+            <select id="products-category-select" class="admin-select"></select>
+            <button class="admin-btn admin-btn-primary" id="btn-add-product">+ Добавить товар</button>
+          </div>
+          <table class="admin-table">
+            <thead><tr>
+              <th>Название</th><th>Цена (сомони)</th><th>Epinby ID</th><th>Тип</th><th>Варианты</th><th>Статус</th><th></th>
+            </tr></thead>
+            <tbody id="products-list"></tbody>
+          </table>
+        </section>
+
+        <!-- ---------- ЗАКАЗЫ ---------- -->
+        <section class="admin-section" id="section-orders">
+          <div class="admin-section-header">
+            <h1 class="admin-page-title">Заказы за последние 7 дней</h1>
+            <input type="text" class="admin-input admin-input-inline" id="orders-search" placeholder="Поиск по ID / username / telegram id" />
+          </div>
+          <table class="admin-table">
+            <thead><tr>
+              <th>#</th><th>Пользователь</th><th>Товар</th><th>Сумма</th><th>Статус</th><th>Дата</th>
+            </tr></thead>
+            <tbody id="orders-list"></tbody>
+          </table>
+        </section>
+
+        <!-- ---------- ПОПОЛНЕНИЯ ---------- -->
+        <section class="admin-section" id="section-payments">
+          <h1 class="admin-page-title">Пополнения на подтверждение</h1>
+          <div class="admin-payments-list" id="payments-list"></div>
+        </section>
+
+        <!-- ---------- ПОЛЬЗОВАТЕЛИ ---------- -->
+        <section class="admin-section" id="section-users">
+          <div class="admin-section-header">
+            <h1 class="admin-page-title">Пользователи</h1>
+            <input type="text" class="admin-input admin-input-inline" id="users-search" placeholder="Поиск по ID / username / телефону" />
+          </div>
+          <table class="admin-table">
+            <thead><tr>
+              <th>TG ID</th><th>Username</th><th>Баланс</th><th>Потрачено</th><th>Регистрация</th><th>Статус</th><th></th>
+            </tr></thead>
+            <tbody id="users-list"></tbody>
+          </table>
+        </section>
+
+        <!-- ---------- ОТЗЫВЫ ---------- -->
+        <section class="admin-section" id="section-reviews">
+          <div class="admin-section-header">
+            <h1 class="admin-page-title">Отзывы</h1>
+            <button class="admin-btn admin-btn-primary" id="btn-add-review">+ Добавить отзыв</button>
+          </div>
+          <div class="admin-grid-cards" id="reviews-list"></div>
+        </section>
+
+        <!-- ---------- РЕКВИЗИТЫ ---------- -->
+        <section class="admin-section" id="section-paymethods">
+          <div class="admin-section-header">
+            <h1 class="admin-page-title">Реквизиты для пополнения</h1>
+            <button class="admin-btn admin-btn-primary" id="btn-add-paymethod">+ Добавить реквизит</button>
+          </div>
+          <div class="admin-grid-cards" id="paymethods-list"></div>
+        </section>
+
+        <!-- ---------- ТЕКСТЫ САЙТА ---------- -->
+        <section class="admin-section" id="section-texts">
+          <div class="admin-section-header">
+            <h1 class="admin-page-title">Тексты сайта</h1>
+            <input type="text" class="admin-input admin-input-inline" id="texts-search" placeholder="Поиск по ключу или тексту" />
+          </div>
+          <p class="admin-hint">Измените текст на нужном языке и нажмите «Сохранить» у строки — изменение применится в мини-приложении и боте.</p>
+          <div class="admin-texts-list" id="texts-list"></div>
+        </section>
+
+        <!-- ---------- НАСТРОЙКИ ---------- -->
+        <section class="admin-section" id="section-settings">
+          <h1 class="admin-page-title">Настройки</h1>
+
+          <div class="admin-card">
+            <h3>Уведомления</h3>
+            <label class="admin-label">ID группы для уведомлений о пополнениях</label>
+            <input type="text" class="admin-input" id="setting-admin-group" placeholder="-100xxxxxxxxxx" />
+            <label class="admin-label">ID канала для публичных уведомлений о покупках</label>
+            <input type="text" class="admin-input" id="setting-sales-channel" placeholder="-100xxxxxxxxxx" />
+            <button class="admin-btn admin-btn-primary" id="btn-save-settings">Сохранить</button>
+          </div>
+
+          <div class="admin-card">
+            <h3>Пароль администратора</h3>
+            <input type="password" class="admin-input" id="setting-new-password" placeholder="Новый пароль" />
+            <button class="admin-btn admin-btn-secondary" id="btn-change-password">Сменить пароль</button>
+          </div>
+
+          <div class="admin-card">
+            <h3>Поддержка</h3>
+            <p class="admin-hint">Контакт для раздела «Дастгирӣ» в мини-приложении: <b>@dr_kurbonov04</b></p>
+          </div>
+        </section>
+
+      </main>
+    </div>
+  </div>
+
+  <!-- ============= УНИВЕРСАЛЬНОЕ МОДАЛЬНОЕ ОКНО ============= -->
+  <div class="admin-modal-overlay" id="admin-modal-overlay" style="display:none;">
+    <div class="admin-modal" id="admin-modal">
+      <div class="admin-modal-header">
+        <h3 id="admin-modal-title">Заголовок</h3>
+        <button class="admin-icon-btn" id="admin-modal-close">✕</button>
+      </div>
+      <div class="admin-modal-body" id="admin-modal-body"></div>
+    </div>
+  </div>
+
+  <!-- ============= ТОСТ-УВЕДОМЛЕНИЯ ============= -->
+  <div class="admin-toast" id="admin-toast"></div>
+
+</div>
+
+<script src="/static/js/admin.js"></script>
+</body>
+</html>
