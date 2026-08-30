@@ -9,7 +9,7 @@ from typing import Dict
 # ⚠️ Впиши сюда СВОИ НОВЫЕ значения (старые из чата считаются скомпрометированными —
 # перевыпусти токен через @BotFather -> /revoke, и API-ключ в личном кабинете Epinby)
 TELEGRAM_BOT_TOKEN = "8742900596:AAEQvuOoPGrwppic1_JiagXl4z_VZmNzCr4"
-TELEGRAM_WEBAPP_URL = "https://donatertj.onrender.com/"  # без слэша на конце, например https://tajdonat.example.com
+TELEGRAM_WEBAPP_URL = "https://donatertaj.onrender.com"  # без слэша на конце, например https://tajdonat.example.com
 
 # ============= EPINBY API =============
 EPINBY_API_KEY = "kaRSM3jf7PASFhhWX8CmIabnzDq11OBZqQkyMD9d"
@@ -19,7 +19,7 @@ EPINBY_WEBHOOK_SECRET = "fvlXgqw199FxsFCR8tuhF9QrJj6H1RWT"
 # ============= ADMIN SETTINGS =============
 ADMIN_USERNAME = "dr_kurbonov04"
 ADMIN_USER_ID = 5125234072
-ADMIN_PASSWORD = "change_me_on_first_run"  # Смени в /admin после первого входа
+ADMIN_PASSWORD = "Amir142004"  # Смени в /admin после первого входа
 ADMIN_PANEL_PATH = "/admin"
 
 # ============= NOTIFICATION CHANNELS =============
