@@ -89,6 +89,7 @@ const T = {
     err_insufficient_balance: "Балансатон кофӣ нест. Лутфан ҳисобро пур кунед.",
     err_something_wrong: "Хатои номаълум рух дод",
     err_enter_player_id: "ID-и бозингарро ворид кунед",
+    err_player_not_found: "Ин ID вуҷуд надорад",
     player_verified: "✅ Тасдиқ шуд:",
   },
   ru: {
@@ -146,6 +147,7 @@ const T = {
     err_insufficient_balance: "Недостаточно средств. Пожалуйста, пополните баланс.",
     err_something_wrong: "Произошла ошибка",
     err_enter_player_id: "Введите ID игрока",
+    err_player_not_found: "Такого ID не существует",
     player_verified: "✅ Подтверждено:",
   }
 };
@@ -166,16 +168,35 @@ function applyTranslations() {
 async function apiCall(endpoint, options = {}) {
   const initData = tg ? tg.initData : "";
   try {
+    const isFormData = options.body instanceof FormData;
+    // ВАЖНО: при отправке FormData нельзя даже ставить ключ "Content-Type" в объект
+    // headers (даже со значением undefined) — fetch превращает это в буквальный
+    // заголовок "Content-Type: undefined", из-за чего браузер теряет multipart-boundary
+    // и сервер не может распарсить форму (это и была причина 422 при отправке чека).
+    const headers = {
+      "X-Telegram-Init-Data": initData,
+      ...(isFormData ? {} : { "Content-Type": "application/json" }),
+      ...(options.headers || {})
+    };
     const res = await fetch(API_BASE + endpoint, {
       ...options,
-      headers: {
-        "Content-Type": options.body instanceof FormData ? undefined : "application/json",
-        "X-Telegram-Init-Data": initData,
-        ...(options.headers || {})
-      }
+      headers
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Request failed");
+    let data;
+    try {
+      data = await res.json();
+    } catch (parseErr) {
+      // Сервер вернул не-JSON тело (например голая страница 500 без JSON) —
+      // не пытаться читать data.detail из мусора, сразу дать понятную ошибку
+      throw new Error(res.ok ? "Empty or invalid server response" : `Server error (${res.status})`);
+    }
+    if (!res.ok) {
+      // FastAPI кладёт сообщение об ошибке в поле "detail", а не "error" —
+      // раньше здесь всегда терялось реальное сообщение и показывалось "Request failed"
+      const err = new Error(data.detail || data.error || "Request failed");
+      err.code = data.detail; // для сравнения с спец-кодами вроде "PLAYER_NOT_FOUND"
+      throw err;
+    }
     return data;
   } catch (err) {
     console.error("API error:", endpoint, err);
@@ -391,13 +412,20 @@ async function validatePlayer() {
   resultEl.textContent = state.language === "ru" ? "Проверка..." : "Санҷиш...";
   resultEl.className = "verify-result";
 
+  // Для товаров с региональными вариантами (например Free Fire) верхнеуровневый
+  // epinby_product_id обычно не является реальным товаром в Epinby — брать ID
+  // первого доступного варианта, чтобы проверка ID вообще прошла у Epinby
+  const variantEntries = state.selectedProduct.variants ? Object.values(state.selectedProduct.variants) : [];
+  const productIdForValidation =
+    (variantEntries[0] && variantEntries[0].epinby_product_id) || state.selectedProduct.epinby_product_id;
+
   try {
     const res = await apiCall("/validate-player", {
       method: "POST",
-      body: JSON.stringify({ product_id: state.selectedProduct.epinby_product_id, player_id: playerId })
+      body: JSON.stringify({ product_id: productIdForValidation, player_id: playerId })
     });
     state.playerInfo = { ...res.data, player_id: playerId };
-    resultEl.textContent = `${t("player_verified")} ${res.data.nickname || res.data.player_name}`;
+    resultEl.textContent = `✅ ${t("player_verified")} ${res.data.nickname || res.data.player_name || ""}`;
     resultEl.className = "verify-result success";
 
     if (state.selectedProduct.variants) {
@@ -406,7 +434,9 @@ async function validatePlayer() {
     }
     updateBuyBar();
   } catch (err) {
-    resultEl.textContent = "❌ " + (err.message || t("err_something_wrong"));
+    // Спец-код от сервера: ID реально не существует у поставщика (не техническая ошибка)
+    const notFound = err.code === "PLAYER_NOT_FOUND";
+    resultEl.textContent = "❌ " + (notFound ? t("err_player_not_found") : (err.message || t("err_something_wrong")));
     resultEl.className = "verify-result error";
     state.playerInfo = null;
     updateBuyBar();

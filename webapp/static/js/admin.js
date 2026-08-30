@@ -104,6 +104,19 @@
     if (e.target === el("admin-modal-overlay")) closeModal();
   });
 
+  // Оборачивает группу полей в отдельную панель со своим заголовком —
+  // раньше формы (особенно товара) были одним длинным списком полей подряд,
+  // из-за чего сложную форму было неудобно читать и заполнять. Теперь форма
+  // делится на понятные "окна": Основное / Поставщик / Изображение / Варианты.
+  function formSection(icon, title, innerHtml) {
+    return `<div style="background:var(--bg-input);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:14px 14px 4px;margin-bottom:14px;">
+      <div style="font-size:12px;font-weight:800;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px;display:flex;align-items:center;gap:6px;">
+        <span>${icon}</span><span>${title}</span>
+      </div>
+      ${innerHtml}
+    </div>`;
+  }
+
   function escapeHtml(str) {
     if (str === null || str === undefined) return "";
     return String(str)
@@ -320,13 +333,17 @@
   function openCategoryModal(cat) {
     const isEdit = !!cat;
     openModal(isEdit ? "Изменить категорию" : "Новая категория", `
-      <label class="admin-label">Название (русский)</label>
-      <input class="admin-input" id="f-name-ru" value="${escapeHtml(cat?.name_ru)}" placeholder="Например: Free Fire">
-      <label class="admin-label">Номи (тоҷикӣ)</label>
-      <input class="admin-input" id="f-name-tg" value="${escapeHtml(cat?.name_tg)}" placeholder="Масалан: Free Fire">
-      <label class="admin-file-label">📷 Фото категории<input type="file" id="f-image" accept="image/*" style="display:none"></label>
-      <img id="f-image-preview" class="admin-modal-preview" style="${cat?.image_url ? 'display:block' : ''}" src="${cat?.image_url || ''}">
-      ${isEdit ? `<label class="admin-label" style="display:flex;align-items:center;gap:8px;"><input type="checkbox" id="f-active" ${cat.is_active ? "checked" : ""}> Категория активна</label>` : ""}
+      ${formSection("📝", "Название", `
+        <label class="admin-label">Название (русский)</label>
+        <input class="admin-input" id="f-name-ru" value="${escapeHtml(cat?.name_ru)}" placeholder="Например: Free Fire">
+        <label class="admin-label">Номи (тоҷикӣ)</label>
+        <input class="admin-input" id="f-name-tg" value="${escapeHtml(cat?.name_tg)}" placeholder="Масалан: Free Fire">
+        ${isEdit ? `<label class="admin-label" style="display:flex;align-items:center;gap:8px;"><input type="checkbox" id="f-active" ${cat.is_active ? "checked" : ""}> Категория активна</label>` : ""}
+      `)}
+      ${formSection("📷", "Изображение", `
+        <label class="admin-file-label">Фото категории<input type="file" id="f-image" accept="image/*" style="display:none"></label>
+        <img id="f-image-preview" class="admin-modal-preview" style="${cat?.image_url ? 'display:block' : ''}" src="${cat?.image_url || ''}">
+      `)}
       <div class="admin-modal-actions">
         <button class="admin-btn admin-btn-secondary" id="f-cancel">Отмена</button>
         <button class="admin-btn admin-btn-primary" id="f-save">Сохранить</button>
@@ -423,8 +440,100 @@
   el("btn-add-product").addEventListener("click", () => {
     const categoryId = +el("products-category-select").value;
     if (!categoryId) { toast("Сначала добавьте категорию", "error"); return; }
-    openProductModal(null, categoryId);
+    openEpinbyImportModal(categoryId);
   });
+
+  // ============= ИМПОРТ ТОВАРА ИЗ EPINBY =============
+  // Раньше товар добавлялся полностью вручную (включая Epinby ID вслепую).
+  // Теперь: выбираешь товар из каталога поставщика — id/картинка/тип подтягиваются
+  // сами, вручную остаётся ввести только своё название (tg/ru) и цену.
+  let epinbyGamesCache = null;
+
+  async function openEpinbyImportModal(categoryId) {
+    openModal("Импорт товара из Epinby", `
+      <div class="admin-text-fields" style="margin-bottom:12px;">
+        <select class="admin-select admin-input-inline" id="ei-game" style="min-width:160px">
+          <option value="">Все игры</option>
+        </select>
+        <input class="admin-input admin-input-inline" id="ei-search" placeholder="Поиск по названию товара">
+      </div>
+      <div id="ei-list" style="max-height:50vh; overflow-y:auto;">
+        <p class="admin-hint">Загрузка каталога...</p>
+      </div>
+      <div class="admin-modal-actions">
+        <button class="admin-btn admin-btn-secondary" id="ei-manual">Добавить вручную вместо импорта</button>
+        <button class="admin-btn admin-btn-secondary" id="ei-cancel">Отмена</button>
+      </div>
+    `, {
+      wide: true,
+      onMount: async () => {
+        el("ei-cancel").addEventListener("click", closeModal);
+        el("ei-manual").addEventListener("click", () => openProductModal(null, categoryId));
+
+        try {
+          if (!epinbyGamesCache) {
+            const res = await apiAdmin("/api/admin/epinby-games");
+            epinbyGamesCache = res.data || [];
+          }
+          const gameSelect = el("ei-game");
+          epinbyGamesCache.forEach((g) => {
+            const opt = document.createElement("option");
+            opt.value = g.id ?? g.game_id ?? "";
+            opt.textContent = g.name ?? g.title ?? `Игра #${opt.value}`;
+            gameSelect.appendChild(opt);
+          });
+        } catch (e) {
+          toast("Не удалось загрузить список игр: " + e.message, "error");
+        }
+
+        let debounceTimer;
+        const reload = () => loadEpinbyList(categoryId);
+        el("ei-game").addEventListener("change", reload);
+        el("ei-search").addEventListener("input", () => {
+          clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(reload, 350);
+        });
+        reload();
+      },
+    });
+  }
+
+  async function loadEpinbyList(categoryId) {
+    const listEl = el("ei-list");
+    listEl.innerHTML = `<p class="admin-hint">Загрузка...</p>`;
+    const gameId = el("ei-game").value;
+    const search = el("ei-search").value.trim();
+    try {
+      const params = new URLSearchParams();
+      if (gameId) params.set("game_id", gameId);
+      if (search) params.set("search", search);
+      const res = await apiAdmin(`/api/admin/epinby-products?${params.toString()}`);
+      const items = res.data || [];
+      if (!items.length) {
+        listEl.innerHTML = `<p class="admin-hint">Ничего не найдено в каталоге Epinby.</p>`;
+        return;
+      }
+      listEl.innerHTML = `<div class="admin-grid-cards">${items.map((p, i) => `
+        <div class="admin-entity-card">
+          <img class="admin-entity-img" src="${p.image_url || ''}" onerror="this.style.visibility='hidden'">
+          <div class="admin-entity-body">
+            <div class="admin-entity-title">${escapeHtml(p.name || 'Без названия')}</div>
+            <div class="admin-entity-sub">Epinby ID: ${p.epinby_product_id ?? '—'} · ${p.type === 'TOPUP' ? 'Пополнение' : 'Ваучер'}</div>
+          </div>
+          <div class="admin-entity-actions">
+            <button class="admin-btn admin-btn-primary admin-btn-sm" data-pick="${i}">Выбрать</button>
+          </div>
+        </div>`).join("")}</div>`;
+      listEl.querySelectorAll("[data-pick]").forEach((b) => {
+        b.addEventListener("click", () => {
+          const picked = items[+b.dataset.pick];
+          openProductModal(null, categoryId, picked);
+        });
+      });
+    } catch (e) {
+      listEl.innerHTML = `<p class="admin-hint">Ошибка загрузки каталога: ${escapeHtml(e.message)}</p>`;
+    }
+  }
 
   function variantRowHtml(region = "", epinbyId = "") {
     return `<div class="admin-text-fields" style="margin-bottom:8px;">
@@ -434,32 +543,48 @@
     </div>`;
   }
 
-  function openProductModal(product, categoryId) {
+  function openProductModal(product, categoryId, imported) {
+    // imported — товар, выбранный в окне "Импорт из Epinby" (openEpinbyImportModal):
+    // { epinby_product_id, name, image_url, type }. Из него подставляем всё,
+    // КРОМЕ названия для покупателя и цены — их всегда вводит админ вручную.
     const isEdit = !!product;
     const variants = product?.variants || {};
     const variantRows = Object.entries(variants).map(([region, v]) => variantRowHtml(region, v.epinby_product_id)).join("");
+    const epinbyId = product?.epinby_product_id ?? imported?.epinby_product_id ?? "";
+    const epinbyType = product?.epinby_product_type ?? imported?.type ?? "VOUCHER";
+    const imageUrl = product?.image_url ?? imported?.image_url ?? "";
+    const importedHint = imported
+      ? `<p class="admin-hint" style="margin-top:0">Товар поставщика: <b>${escapeHtml(imported.name || "")}</b> (Epinby ID ${epinbyId}) — картинка и тип подставлены автоматически, впишите своё название и цену.</p>`
+      : "";
 
     openModal(isEdit ? "Изменить товар" : "Новый товар", `
-      <label class="admin-label">Название (русский)</label>
-      <input class="admin-input" id="f-name-ru" value="${escapeHtml(product?.name_ru)}" placeholder="Например: 100 алмазов">
-      <label class="admin-label">Номи (тоҷикӣ)</label>
-      <input class="admin-input" id="f-name-tg" value="${escapeHtml(product?.name_tg)}" placeholder="Масалан: 100 алмос">
-      <div class="admin-text-fields">
-        <input class="admin-input" id="f-price" type="number" step="0.01" placeholder="Цена, сомони" value="${product?.price_somoni ?? ''}">
-        <input class="admin-input" id="f-epinby-id" type="number" placeholder="Epinby Product ID" value="${product?.epinby_product_id ?? ''}">
-      </div>
-      <label class="admin-label">Тип товара</label>
-      <select class="admin-select" id="f-type">
-        <option value="VOUCHER" ${product?.epinby_product_type !== "TOPUP" ? "selected" : ""}>Ваучер (код)</option>
-        <option value="TOPUP" ${product?.epinby_product_type === "TOPUP" ? "selected" : ""}>Пополнение (по ID игрока)</option>
-      </select>
-      <label class="admin-file-label">📷 Фото товара (необязательно)<input type="file" id="f-image" accept="image/*" style="display:none"></label>
-      <img id="f-image-preview" class="admin-modal-preview" style="${product?.image_url ? 'display:block' : ''}" src="${product?.image_url || ''}">
-
-      <label class="admin-label">Региональные варианты (необязательно)</label>
-      <p class="admin-hint" style="margin-top:0">Например GLOBAL и CIS с разным Epinby ID — цена в мини-аппе останется общей.</p>
-      <div id="variant-rows">${variantRows}</div>
-      <button type="button" class="admin-btn admin-btn-secondary admin-btn-sm" id="f-add-variant" style="margin-bottom:14px;">+ Добавить регион</button>
+      ${formSection("📝", "Основное", `
+        <label class="admin-label">Название (русский)</label>
+        <input class="admin-input" id="f-name-ru" value="${escapeHtml(product?.name_ru)}" placeholder="Например: 100 алмазов">
+        <label class="admin-label">Номи (тоҷикӣ)</label>
+        <input class="admin-input" id="f-name-tg" value="${escapeHtml(product?.name_tg)}" placeholder="Масалан: 100 алмос">
+        <div class="admin-text-fields">
+          <input class="admin-input" id="f-price" type="number" step="0.01" placeholder="Цена, сомони" value="${product?.price_somoni ?? ''}">
+          <select class="admin-select" id="f-type" style="flex:1;min-width:180px;">
+            <option value="VOUCHER" ${epinbyType !== "TOPUP" ? "selected" : ""}>Ваучер (код)</option>
+            <option value="TOPUP" ${epinbyType === "TOPUP" ? "selected" : ""}>Пополнение (по ID игрока)</option>
+          </select>
+        </div>
+      `)}
+      ${formSection("🔗", "Поставщик (Epinby)", `
+        ${importedHint}
+        <label class="admin-label">Epinby Product ID</label>
+        <input class="admin-input" id="f-epinby-id" type="number" placeholder="Epinby Product ID" value="${epinbyId}" ${imported ? "readonly" : ""}>
+      `)}
+      ${formSection("📷", "Изображение", `
+        <label class="admin-file-label">Фото товара (необязательно, можно переопределить)<input type="file" id="f-image" accept="image/*" style="display:none"></label>
+        <img id="f-image-preview" class="admin-modal-preview" style="${imageUrl ? 'display:block' : ''}" src="${imageUrl}">
+      `)}
+      ${formSection("🌍", "Региональные варианты (необязательно)", `
+        <p class="admin-hint" style="margin-top:0">Например GLOBAL и CIS с разным Epinby ID — цена в мини-аппе останется общей.</p>
+        <div id="variant-rows">${variantRows}</div>
+        <button type="button" class="admin-btn admin-btn-secondary admin-btn-sm" id="f-add-variant" style="margin-bottom:14px;">+ Добавить регион</button>
+      `)}
 
       <div class="admin-modal-actions">
         <button class="admin-btn admin-btn-secondary" id="f-cancel">Отмена</button>
@@ -475,7 +600,7 @@
           bindVariantRemove();
         });
         bindVariantRemove();
-        el("f-save").addEventListener("click", () => saveProduct(product?.id, categoryId));
+        el("f-save").addEventListener("click", () => saveProduct(product?.id, categoryId, imported));
       },
     });
   }
@@ -497,7 +622,7 @@
     return Object.keys(variants).length ? variants : null;
   }
 
-  async function saveProduct(id, categoryId) {
+  async function saveProduct(id, categoryId, imported) {
     const nameRu = el("f-name-ru").value.trim();
     const nameTg = el("f-name-tg").value.trim();
     const price = parseFloat(el("f-price").value);
@@ -515,7 +640,13 @@
     const variants = collectVariants();
     fd.append("variants", variants ? JSON.stringify(variants) : "");
     const fileInput = el("f-image");
-    if (fileInput.files[0]) fd.append("image", fileInput.files[0]);
+    if (fileInput.files[0]) {
+      fd.append("image", fileInput.files[0]);
+    } else if (imported?.image_url) {
+      // Картинку не загружали руками — используем ссылку на картинку с сайта поставщика,
+      // подставленную при импорте (см. openEpinbyImportModal / openProductModal).
+      fd.append("image_url", imported.image_url);
+    }
 
     try {
       await apiAdmin(id ? `/api/admin/products/${id}` : "/api/admin/products", { method: id ? "PUT" : "POST", body: fd });
@@ -723,16 +854,20 @@
 
   function openReviewModal(review) {
     openModal(review ? "Изменить отзыв" : "Добавить отзыв", `
-      <label class="admin-label">Имя автора</label>
-      <input class="admin-input" id="f-author" value="${escapeHtml(review?.author_name)}" placeholder="Имя">
-      <label class="admin-label">Оценка</label>
-      <select class="admin-select" id="f-rating">
-        ${[5, 4, 3, 2, 1].map((n) => `<option value="${n}" ${review?.rating === n ? "selected" : ""}>${"⭐".repeat(n)}</option>`).join("")}
-      </select>
-      <label class="admin-label">Текст (русский)</label>
-      <textarea class="admin-input" id="f-text-ru" rows="3">${escapeHtml(review?.text_ru)}</textarea>
-      <label class="admin-label">Матн (тоҷикӣ)</label>
-      <textarea class="admin-input" id="f-text-tg" rows="3">${escapeHtml(review?.text_tg)}</textarea>
+      ${formSection("👤", "Автор и оценка", `
+        <label class="admin-label">Имя автора</label>
+        <input class="admin-input" id="f-author" value="${escapeHtml(review?.author_name)}" placeholder="Имя">
+        <label class="admin-label">Оценка</label>
+        <select class="admin-select" id="f-rating">
+          ${[5, 4, 3, 2, 1].map((n) => `<option value="${n}" ${review?.rating === n ? "selected" : ""}>${"⭐".repeat(n)}</option>`).join("")}
+        </select>
+      `)}
+      ${formSection("💬", "Текст отзыва", `
+        <label class="admin-label">Текст (русский)</label>
+        <textarea class="admin-input" id="f-text-ru" rows="3">${escapeHtml(review?.text_ru)}</textarea>
+        <label class="admin-label">Матн (тоҷикӣ)</label>
+        <textarea class="admin-input" id="f-text-tg" rows="3">${escapeHtml(review?.text_tg)}</textarea>
+      `)}
       <div class="admin-modal-actions">
         <button class="admin-btn admin-btn-secondary" id="f-cancel">Отмена</button>
         <button class="admin-btn admin-btn-primary" id="f-save">Сохранить</button>
@@ -800,24 +935,31 @@
 
   function openPaymethodModal(method) {
     openModal(method ? "Изменить реквизит" : "Новый реквизит", `
-      <label class="admin-label">Название (русский)</label>
-      <input class="admin-input" id="f-name-ru" value="${escapeHtml(method?.name_ru)}" placeholder="Например: Алиф Мобайл">
-      <label class="admin-label">Номи (тоҷикӣ)</label>
-      <input class="admin-input" id="f-name-tg" value="${escapeHtml(method?.name_tg)}" placeholder="Масалан: Алиф Мобайл">
-      <label class="admin-label">Номер счёта / карты</label>
-      <input class="admin-input" id="f-account" value="${escapeHtml(method?.account_number)}">
-      <label class="admin-label">Телефон</label>
-      <input class="admin-input" id="f-phone" value="${escapeHtml(method?.phone_number)}">
-      <label class="admin-label">ФИО получателя</label>
-      <input class="admin-input" id="f-fullname" value="${escapeHtml(method?.full_name)}">
-      <label class="admin-file-label">📷 Логотип / фото<input type="file" id="f-image" accept="image/*" style="display:none"></label>
-      <img id="f-image-preview" class="admin-modal-preview" style="${method?.image_url ? 'display:block' : ''}" src="${method?.image_url || ''}">
-      ${method ? `<label class="admin-label" style="display:flex;align-items:center;gap:8px;"><input type="checkbox" id="f-active" ${method.is_active ? "checked" : ""}> Активен</label>` : ""}
+      ${formSection("📝", "Название", `
+        <label class="admin-label">Название (русский)</label>
+        <input class="admin-input" id="f-name-ru" value="${escapeHtml(method?.name_ru)}" placeholder="Например: Алиф Мобайл">
+        <label class="admin-label">Номи (тоҷикӣ)</label>
+        <input class="admin-input" id="f-name-tg" value="${escapeHtml(method?.name_tg)}" placeholder="Масалан: Алиф Мобайл">
+        ${method ? `<label class="admin-label" style="display:flex;align-items:center;gap:8px;"><input type="checkbox" id="f-active" ${method.is_active ? "checked" : ""}> Активен</label>` : ""}
+      `)}
+      ${formSection("🏦", "Реквизиты", `
+        <label class="admin-label">Номер счёта / карты</label>
+        <input class="admin-input" id="f-account" value="${escapeHtml(method?.account_number)}">
+        <label class="admin-label">Телефон</label>
+        <input class="admin-input" id="f-phone" value="${escapeHtml(method?.phone_number)}">
+        <label class="admin-label">ФИО получателя</label>
+        <input class="admin-input" id="f-fullname" value="${escapeHtml(method?.full_name)}">
+      `)}
+      ${formSection("📷", "Логотип / фото", `
+        <label class="admin-file-label">Загрузить изображение<input type="file" id="f-image" accept="image/*" style="display:none"></label>
+        <img id="f-image-preview" class="admin-modal-preview" style="${method?.image_url ? 'display:block' : ''}" src="${method?.image_url || ''}">
+      `)}
       <div class="admin-modal-actions">
         <button class="admin-btn admin-btn-secondary" id="f-cancel">Отмена</button>
         <button class="admin-btn admin-btn-primary" id="f-save">Сохранить</button>
       </div>
     `, {
+      wide: true,
       onMount: () => {
         imagePreviewHandler("f-image", "f-image-preview");
         el("f-cancel").addEventListener("click", closeModal);

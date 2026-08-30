@@ -153,11 +153,12 @@ def get_admin_password(db: Session) -> str:
     return stored if stored else ADMIN_PASSWORD
 
 
-async def notify_admin_group(text: str):
-    if not ADMIN_GROUP_CHAT_ID:
+async def notify_admin_group(db: Session, text: str):
+    chat_id = SettingsCRUD.get(db, "admin_group_chat_id") or ADMIN_GROUP_CHAT_ID
+    if not chat_id:
         return
     try:
-        await bot.send_message(ADMIN_GROUP_CHAT_ID, text, parse_mode="HTML")
+        await bot.send_message(chat_id, text, parse_mode="HTML")
     except Exception as e:
         logger.error(f"Failed to notify admin group: {e}")
 
@@ -389,9 +390,14 @@ async def api_validate_player(request: Request, user: User = Depends(get_current
         server_id=body.get("server_id"),
     )
     if not result.get("success"):
-        error = result.get("error", {})
+        error = result.get("error", {}) or {}
+        status_code = error.get("status_code")
+        if status_code is not None and 400 <= status_code < 500:
+            # Epinby ответил клиентской ошибкой -> практически всегда значит,
+            # что такого игрока/ID не существует, а не техническая проблема
+            raise HTTPException(status_code=404, detail="PLAYER_NOT_FOUND")
         raise HTTPException(status_code=400, detail=error.get("message", "Validation failed"))
-    return {"success": True, "data": result["data"]}
+    return {"success": True, "data": result.get("data")}
 
 
 # ============= API: ORDERS =============
@@ -515,7 +521,7 @@ async def api_create_payment(
         f"🆔 ID платежа: {payment.id}\n\n"
         f"Откройте админ-панель для подтверждения/отклонения."
     )
-    await notify_admin_group(text)
+    await notify_admin_group(db, text)
 
     return {"success": True, "data": serialize_payment(payment)}
 
@@ -708,6 +714,85 @@ async def api_admin_get_products(category_id: int, db: Session = Depends(get_db)
     return {"success": True, "data": [serialize_product(p, admin=True) for p in products]}
 
 
+@app.get("/api/admin/epinby-games")
+async def api_admin_epinby_games(admin: User = Depends(get_current_admin)):
+    """
+    Список игр из каталога Epinby — нужен для фильтра в окне импорта товара
+    (см. /api/admin/epinby-products). Раньше такого способа не было вообще:
+    товар добавлялся только вручную, поле за полем, включая Epinby ID вслепую.
+    """
+    epinby = EpinbyAPI()
+    result = epinby.get_games()
+    if not result.get("success"):
+        raise HTTPException(status_code=502, detail=(result.get("error") or {}).get("message", "Epinby error"))
+    games = result.get("data")
+    if games is None:
+        games = result.get("games", [])
+    return {"success": True, "data": games}
+
+
+@app.get("/api/admin/epinby-products")
+async def api_admin_epinby_products(
+    game_id: int = None,
+    type: str = None,
+    search: str = None,
+    page: int = 1,
+    admin: User = Depends(get_current_admin),
+):
+    """
+    Каталог товаров поставщика (Epinby) для импорта в товар мини-аппа.
+    Админ выбирает товар из списка на сайте поставщика — Epinby ID, картинка
+    и тип (ваучер/пополнение) подставляются автоматически; вручную в модалке
+    остаётся ввести только СВОЁ название (tg/ru) и цену для покупателя —
+    так, как и просили изначально.
+
+    ВАЖНО: точные названия полей в ответе Epinby (`/products`) нигде в проекте
+    не задокументированы, поэтому ниже — защитный разбор с несколькими вариантами
+    ключей (name/title, image/image_url/icon и т.д.). Если после первого реального
+    запроса что-то не подтянется (например картинка), смотри в логи сервера —
+    строка "Epinby products sample keys" покажет реальные ключи первого товара,
+    и pick(...) ниже нужно будет дополнить нужным ключом.
+    """
+    epinby = EpinbyAPI()
+    result = epinby.get_products(type=type, game_id=game_id, page=page, per_page=100)
+    if not result.get("success"):
+        raise HTTPException(status_code=502, detail=(result.get("error") or {}).get("message", "Epinby error"))
+
+    raw_items = result.get("data")
+    if raw_items is None:
+        raw_items = result.get("products", [])
+    if isinstance(raw_items, dict):
+        raw_items = raw_items.get("items") or raw_items.get("data") or []
+
+    if raw_items and isinstance(raw_items[0], dict):
+        logger.info(f"Epinby products sample keys: {list(raw_items[0].keys())}")
+
+    def pick(item, *keys, default=None):
+        for k in keys:
+            v = item.get(k)
+            if v not in (None, ""):
+                return v
+        return default
+
+    normalized = []
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        name = pick(item, "name", "title", "product_name")
+        if search and search.lower() not in str(name or "").lower():
+            continue
+        normalized.append({
+            "epinby_product_id": pick(item, "id", "product_id"),
+            "name": name,
+            "image_url": pick(item, "image", "image_url", "icon", "logo"),
+            "type": (pick(item, "type", "product_type", default="voucher") or "voucher").upper(),
+            "game_id": pick(item, "game_id"),
+            "game_name": pick(item, "game_name", "game"),
+            "supplier_price": pick(item, "price", "cost"),
+        })
+    return {"success": True, "data": normalized}
+
+
 @app.post("/api/admin/products")
 async def api_admin_create_product(
     category_id: int = Form(...),
@@ -719,6 +804,7 @@ async def api_admin_create_product(
     epinby_product_type: str = Form("VOUCHER"),
     variants: str = Form(None),
     image: UploadFile = File(None),
+    image_url: str = Form(None),
     db: Session = Depends(get_db),
     admin: User = Depends(get_current_admin),
 ):
@@ -744,6 +830,10 @@ async def api_admin_create_product(
         updates["variants"] = parsed_variants
     if image is not None and image.filename:
         updates["image_url"] = save_upload(image, PRODUCTS_IMAGES_DIR, f"product_{product.id}")
+    elif image_url:
+        # Ручной файл не загружали — берём ссылку на картинку с сайта поставщика,
+        # подставленную при импорте товара из каталога Epinby (см. /api/admin/epinby-products).
+        updates["image_url"] = image_url
     if updates:
         product = ProductCRUD.update(db, product.id, **updates)
 
@@ -797,6 +887,7 @@ async def api_admin_update_product(
     # Уведомить группу админов об изменении цены
     if price_somoni is not None and price_somoni != old_price:
         await notify_admin_group(
+            db,
             f"💲 <b>Изменена цена товара</b>\n\n"
             f"{product.name_ru}\n"
             f"Было: {old_price} сомони → Стало: {price_somoni} сомони"

@@ -91,9 +91,20 @@ class UserMiddleware(BaseMiddleware):
         db = data.get("db")
         
         # Определить источник (Message или CallbackQuery)
+        referrer_telegram_id = None
         if isinstance(event, Message):
             user_id = event.from_user.id
             username = event.from_user.username
+            # Реферальная ссылка вида https://t.me/<bot>?start=ref_123456 приходит
+            # ботy как текст "/start ref_123456" — раньше это нигде не парсилось,
+            # поэтому referrer_id ни у кого никогда не сохранялся
+            if event.text and event.text.startswith("/start"):
+                parts = event.text.split(maxsplit=1)
+                if len(parts) > 1 and parts[1].startswith("ref_"):
+                    try:
+                        referrer_telegram_id = int(parts[1][len("ref_"):])
+                    except ValueError:
+                        referrer_telegram_id = None
         elif isinstance(event, CallbackQuery):
             user_id = event.from_user.id
             username = event.from_user.username
@@ -102,7 +113,7 @@ class UserMiddleware(BaseMiddleware):
         
         # Создать или получить пользователя
         if db:
-            user = UserCRUD.get_or_create(db, user_id, username)
+            user = UserCRUD.get_or_create(db, user_id, username, referrer_telegram_id=referrer_telegram_id)
             data["user"] = user
             UserCRUD.update_last_activity(db, user.id)
         

@@ -371,7 +371,11 @@ async def show_profile(message: types.Message, user: User, db: Session):
         balance = user.balance_somoni if user.preferred_currency == "somoni" else user.balance_ruble
         currency = "с" if user.preferred_currency == "somoni" else "₽"
         language_name = "Тоҷикӣ" if user.language == "tg" else "Русский"
-        
+
+        bot_username = (await message.bot.get_me()).username
+        referral_link = f"https://t.me/{bot_username}?start=ref_{user.telegram_id}"
+        referrals_count = db.query(User).filter(User.referrer_id == user.id).count()
+
         profile_text = f"""
 <b>👤 {get_text("profile_title", user.language)}</b>
 
@@ -382,7 +386,10 @@ async def show_profile(message: types.Message, user: User, db: Session):
 {get_text("profile_balance", user.language)} <b>{balance} {currency}</b>
 {get_text("profile_language", user.language)} {language_name}
 
-{get_text("profile_referral_bonus", user.language)} {user.referral_bonus} {currency}
+{get_text("profile_referral_bonus", user.language)} {user.referral_bonus} с
+{get_text("profile_referral_count", user.language)} {referrals_count}
+{get_text("profile_referral_link", user.language)}
+<code>{referral_link}</code>
 """
         
         keyboard = InlineKeyboardMarkup(inline_keyboard=[

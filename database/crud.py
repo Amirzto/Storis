@@ -10,22 +10,34 @@ from typing import List, Optional
 from database.models import (
     User, Category, Product, Order, Payment, PaymentMethod, Review, Settings, AdminLog
 )
-from config import ADMIN_USER_ID
+from config import ADMIN_USER_ID, REFERRAL_BONUS_PERCENT
 
 
 # ============= USER OPERATIONS =============
 class UserCRUD:
     @staticmethod
-    def get_or_create(db: Session, telegram_id: int, telegram_username: str = None) -> User:
-        """Получить или создать пользователя"""
+    def get_or_create(db: Session, telegram_id: int, telegram_username: str = None,
+                       referrer_telegram_id: int = None) -> User:
+        """Получить или создать пользователя.
+
+        referrer_telegram_id: telegram_id пригласившего пользователя (из реферальной
+        ссылки /start ref_<telegram_id>). Учитывается только при СОЗДАНИИ нового
+        пользователя — у уже существующих referrer_id задним числом не меняется.
+        """
         user = db.query(User).filter(User.telegram_id == telegram_id).first()
         if not user:
+            referrer_id = None
+            if referrer_telegram_id and referrer_telegram_id != telegram_id:
+                referrer = db.query(User).filter(User.telegram_id == referrer_telegram_id).first()
+                if referrer:
+                    referrer_id = referrer.id
             user = User(
                 telegram_id=telegram_id,
                 telegram_username=telegram_username,
                 language="tg",
                 preferred_currency="somoni",
-                is_admin=(telegram_id == ADMIN_USER_ID)
+                is_admin=(telegram_id == ADMIN_USER_ID),
+                referrer_id=referrer_id
             )
             db.add(user)
             db.commit()
@@ -119,6 +131,30 @@ class UserCRUD:
         if user:
             user.last_activity = datetime.utcnow()
             db.commit()
+
+    @staticmethod
+    def credit_referral_bonus(db: Session, referred_user_id: int, purchase_amount_somoni: float) -> Optional[float]:
+        """
+        Начислить рефереру бонус (REFERRAL_BONUS_PERCENT % от суммы покупки реферала).
+        Вызывается при каждой завершённой (COMPLETED) покупке реферала.
+        Возвращает начисленную сумму, либо None если начислять нечего (нет реферера и т.п.).
+        """
+        referred = db.query(User).filter(User.id == referred_user_id).first()
+        if not referred or not referred.referrer_id or not purchase_amount_somoni or purchase_amount_somoni <= 0:
+            return None
+
+        referrer = db.query(User).filter(User.id == referred.referrer_id).first()
+        if not referrer:
+            return None
+
+        bonus = round(purchase_amount_somoni * REFERRAL_BONUS_PERCENT / 100, 2)
+        if bonus <= 0:
+            return None
+
+        referrer.balance_somoni += bonus
+        referrer.referral_bonus += bonus
+        db.commit()
+        return bonus
 
 
 # ============= CATEGORY OPERATIONS =============

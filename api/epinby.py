@@ -42,19 +42,49 @@ class EpinbyAPI:
             JSON ответ
         """
         url = f"{self.base_url}{endpoint}"
-        
+
         try:
             if method.upper() == "GET":
                 response = requests.get(url, headers=self.headers, **kwargs)
             else:
                 response = requests.request(method, url, headers=self.headers, json=data, **kwargs)
-            
+
             response.raise_for_status()
-            return response.json()
-        
+
+            try:
+                return response.json()
+            except ValueError:
+                # Epinby ответил 2xx, но тело не является валидным JSON
+                logger.error(f"Epinby API returned non-JSON body: {response.text[:500]!r}")
+                return {"success": False, "error": {"message": "Некорректный ответ от Epinby"}}
+
+        except requests.exceptions.HTTPError as e:
+            # raise_for_status() уже выбросил исключение — попробовать достать реальное
+            # сообщение об ошибке из тела ответа, прежде чем падать на generic-текст requests
+            message = str(e)
+            details = None
+            try:
+                body = e.response.json() if e.response is not None else None
+                if isinstance(body, dict):
+                    err = body.get("error")
+                    if isinstance(err, dict):
+                        message = err.get("message", message)
+                    elif isinstance(err, str) and err:
+                        message = err
+                    elif isinstance(body.get("message"), str):
+                        message = body.get("message")
+                    details = body
+            except ValueError:
+                pass  # тело ответа не JSON — оставить message как есть
+
+            status_code = e.response.status_code if e.response is not None else None
+            logger.error(f"Epinby API HTTP error ({status_code}): {message}")
+            return {"success": False, "error": {"message": message, "details": details, "status_code": status_code}}
+
         except requests.exceptions.RequestException as e:
+            # Сетевая ошибка (таймаут, обрыв соединения и т.д.) — тела ответа нет вообще
             logger.error(f"Epinby API error: {e}")
-            return {"success": False, "error": str(e)}
+            return {"success": False, "error": {"message": str(e)}}
     
     # ============= ACCOUNT =============
     def get_me(self) -> Dict[str, Any]:
@@ -352,7 +382,10 @@ class EpinbyWebhookHandler:
                 logger.warning(f"Order not found for webhook: {payload}")
                 return False
 
-            # Обновить статус заказа в БД
+            # Обновить статус заказа в БД (запомнить статус ДО обновления —
+            # нужно чтобы не начислить реферальный бонус дважды при повторной
+            # доставке одного и того же вебхука от Epinby)
+            previous_status = order.status
             order = OrderCRUD.update_status(
                 self.db,
                 order.id,
@@ -365,6 +398,10 @@ class EpinbyWebhookHandler:
                 delivery_data = payload.get("delivery", [])
                 if delivery_data:
                     OrderCRUD.update(self.db, order.id, delivery_data=delivery_data)
+
+                if previous_status != "COMPLETED":
+                    from database.crud import UserCRUD
+                    UserCRUD.credit_referral_bonus(self.db, order.user_id, order.total_price_somoni)
             
             # Если ошибка, вернуть деньги
             elif status in ["FAILED", "CANCELED"]:
